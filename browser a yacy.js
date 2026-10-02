@@ -1,20 +1,18 @@
 // ==UserScript==
-// @name         Browser a YaCy
-// @namespace    http://tampermonkey.net/
+// @name         browser a yacy
+// @namespace    jfdl19991
 // @version      1.2.3
 // @description  Envía la página actual a un nodo YaCy local para indexar, protegiendo la privacidad.
-// @author       Jfdl1991
-// @match        http://*/*
-// @match        https://*/*
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @connect      localhost
-// @connect      127.0.0.1:8090
+// @match        *
 // @run-at      document-idle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @connect      127.0.0.1:8090
 // @noframes
-// @license MIT
-// ==UserScript==
+// @license      CC-BY-NC-4.0
+// ==/UserScript==
+
 
 (function () {
     'use strict';
