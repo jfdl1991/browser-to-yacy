@@ -1,44 +1,45 @@
 // ==UserScript==
-// @name         YaCy Auto-Indexer P2P (Seguro & Sanitizado v1.2.2)
+// @name         Browser a YaCy
 // @namespace    http://tampermonkey.net/
-// @version      1.2.2
-// @description  Envía la página actual a un nodo YaCy local para indexar, protegiendo estrictamente la privacidad. (Versión corregida v1.2.2 - fixes Cognitive Strategy Review)
-// @author       Tú
+// @version      1.2.3
+// @description  Envía la página actual a un nodo YaCy local para indexar, protegiendo la privacidad.
+// @author       Jfdl1991
 // @match        http://*/*
 // @match        https://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      localhost
-// @connect      [IP_ADDRESS]
-// @run-at       document-idle
+// @connect      127.0.0.1:8090
+// @run-at      document-idle
 // @noframes
+// @license MIT
 // ==UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     // ==========================================
     // 1. CONFIGURACIÓN (GM persistence para host)
     // ==========================================
     const YACY_HOST = GM_getValue('YACY_HOST', 'http://localhost:8090');
-    const DELAY_MS = 3500;                // Delay anti-DDoS antes del primer envío
-    const REQ_TIMEOUT_MS = 15000;         // Timeout por request GM_xmlhttpRequest
-    const MAX_RETRY_ATTEMPTS = 3;         // Máximo reintentos en caso de fallo
-    const POLL_INTERVAL_MS = 5000;        // Intervalo para detectar cambios de URL (5s)
-    const COOLDOWN_FACTOR = 6;            // 1 envío cada 6 polls = ~30s (anti-CAPTCHA)
+    const DELAY_MS = 3500; // Delay anti-DDoS antes del primer envío
+    const REQ_TIMEOUT_MS = 15000; // Timeout por request GM_xmlhttpRequest
+    const MAX_RETRY_ATTEMPTS = 3; // Máximo reintentos en caso de fallo
+    const POLL_INTERVAL_MS = 5000; // Intervalo para detectar cambios de URL (5s)
+    const COOLDOWN_FACTOR = 6; // 1 envío cada 6 polls = ~30s (anti-CAPTCHA)
     let pollCounter = 0;
 
     // ==========================================
     // 2. LISTAS DE SEGURIDAD (Set para O(1) lookup)
     // ==========================================
     const BLACKLISTED_DOMAINS = new Set([
-        'localhost', '[IP_ADDRESS]',  // Placeholder para usuario (documentado)
-        'google.com', 'docs.google.com', 'drive.google.com', 'mail.google.com', 'keep.google.com',
-        'notion.so', 'dropbox.com', 'onedrive.live.com', 'icloud.com',
-        'paypal.com', 'stripe.com', 'mercadopago.com',
-        'github.com', 'gitlab.com', 'bitbucket.org'
-    ]);
+                'localhost', '[IP_ADDRESS]', // Placeholder para usuario (documentado)
+                'google.com', 'docs.google.com', 'drive.google.com', 'mail.google.com', 'keep.google.com',
+                'notion.so', 'dropbox.com', 'onedrive.live.com', 'icloud.com',
+                'paypal.com', 'stripe.com', 'mercadopago.com',
+                'github.com', 'gitlab.com', 'bitbucket.org'
+            ]);
 
     const SENSITIVE_KEYWORDS_PATTERNS = [
         'cart', 'checkout', 'account', 'login', 'signin', 'signup',
@@ -55,32 +56,32 @@
     const SENSITIVE_KEYWORDS_REGEX = new RegExp(SENSITIVE_KEYWORDS_PATTERNS.join('|'), 'i');
 
     const TRACKING_PARAMS_EXACT = new Set([
-        'gclid', 'fbclid', 'msclkid', 'ref', 'source', '_hsenc', 'mc_eid',
-        // Expandido para cobertura completa (MEDIUM)
-        'yclid', 'dclid', 'twclid', 'ttclid', 'gbraid', 'wbraid',
-        'mc_cid', 'sc_', 'track', 'trk', '__hstc', 'hsa_fp',
-        'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
-        'cx', 'ie', 'source', 'gac'
-    ]);
+                'gclid', 'fbclid', 'msclkid', 'ref', 'source', '_hsenc', 'mc_eid',
+                // Expandido para cobertura completa (MEDIUM)
+                'yclid', 'dclid', 'twclid', 'ttclid', 'gbraid', 'wbraid',
+                'mc_cid', 'sc_', 'track', 'trk', '__hstc', 'hsa_fp',
+                'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+                'cx', 'ie', 'source', 'gac'
+            ]);
 
     const SENSITIVE_PARAMS = new Set([
-        'token', 'auth', 'key', 'pwd', 'code', 'session', 'sig', 'signature',
-        'access_token', 'api_key', 'apikey', 'secret', 'csrf', 'state',
-        'id_token', 'refresh_token', 'password', 'pin', 'cvv', 'otp', 'mfa_code',
-        'session_id', 'viewer_id', 'user_id'
-    ]);
+                'token', 'auth', 'key', 'pwd', 'code', 'session', 'sig', 'signature',
+                'access_token', 'api_key', 'apikey', 'secret', 'csrf', 'state',
+                'id_token', 'refresh_token', 'password', 'pin', 'cvv', 'otp', 'mfa_code',
+                'session_id', 'viewer_id', 'user_id'
+            ]);
 
     // MustNotMatch patterns as Set for O(1) lookup (replaces fragile monolithic regex)
     const MUST_NOT_MATCH_PATTERNS = new Set([
-        'file:', 'chrome:', 'about:', 'ftp:', 'javascript:',
-        '192.168.', 'localhost',
-        'cart', 'checkout', 'account', 'login', 'signin', 'signup',
-        'billing', 'payment', 'paypal', 'stripe', 'bank', 'card', 'tarjeta', 'pago',
-        'medico', 'health', 'medical',
-        'token=', 'auth=', 'key=', 'pwd=', 'code=', 'session=', 'signature=',
-        'password=', 'secret=', 'csrf=', 'state=', 'refresh_token=', 'id_token=',
-        'admin', 'dashboard', 'reset', 'verify'
-    ]);
+                'file:', 'chrome:', 'about:', 'ftp:', 'javascript:',
+                '192.168.', 'localhost',
+                'cart', 'checkout', 'account', 'login', 'signin', 'signup',
+                'billing', 'payment', 'paypal', 'stripe', 'bank', 'card', 'tarjeta', 'pago',
+                'medico', 'health', 'medical',
+                'token=', 'auth=', 'key=', 'pwd=', 'code=', 'session=', 'signature=',
+                'password=', 'secret=', 'csrf=', 'state=', 'refresh_token=', 'id_token=',
+                'admin', 'dashboard', 'reset', 'verify'
+            ]);
 
     // Regex pre-compilados (HIGH - IPv6, 169.254, .local, Carrier-Grade NAT 100.64.x.x)
     const IP_PRIVATE_REGEX = /^(127\.|0\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|::1|fe80:|fc00:|fd00:)/i;
@@ -98,8 +99,8 @@
     // 4. FUNCIONES DE SEGURIDAD (ZERO-LEAK)
     // ==========================================
     function isDomainBlacklisted(hostname) {
-        return BLACKLISTED_DOMAINS.has(hostname) || 
-               [...BLACKLISTED_DOMAINS].some(domain => hostname.endsWith('.' + domain));
+        return BLACKLISTED_DOMAINS.has(hostname) ||
+        [...BLACKLISTED_DOMAINS].some(domain => hostname.endsWith('.' + domain));
     }
 
     function isIpPrivate(hostname) {
@@ -110,7 +111,8 @@
     function checkMustNotMatchPatterns(text) {
         const lower = text.toLowerCase();
         for (const pattern of MUST_NOT_MATCH_PATTERNS) {
-            if (lower.includes(pattern)) return true;
+            if (lower.includes(pattern))
+                return true;
         }
         return false;
     }
@@ -118,32 +120,40 @@
     function isUrlSafe(urlObj) {
         try {
             // 4.1. Rechazar credenciales embebidas
-            if (urlObj.username || urlObj.password) return false;
+            if (urlObj.username || urlObj.password)
+                return false;
 
             // 4.2. Rechazar protocolos no web
-            if (!['http:', 'https:'].includes(urlObj.protocol)) return false;
+            if (!['http:', 'https:'].includes(urlObj.protocol))
+                return false;
 
             // 4.3. Rechazar IPs privadas y localhost
             const hostname = urlObj.hostname.toLowerCase();
-            if (isIpPrivate(hostname)) return false;
+            if (isIpPrivate(hostname))
+                return false;
 
             // 4.4. Rechazar dominios en blacklist
-            if (isDomainBlacklisted(hostname)) return false;
+            if (isDomainBlacklisted(hostname))
+                return false;
 
             // 4.5. Rechazar keywords sensibles (case-insensitive) - check decoded path
             const fullPath = (urlObj.pathname + urlObj.search + urlObj.hash).toLowerCase();
-            if (SENSITIVE_KEYWORDS_REGEX.test(fullPath)) return false;
+            if (SENSITIVE_KEYWORDS_REGEX.test(fullPath))
+                return false;
 
             // 4.5b. Also check RAW href for URL-encoded keywords (e.g., %22login%22)
             const rawHref = window.location.href.toLowerCase();
-            if (checkMustNotMatchPatterns(rawHref)) return false;
+            if (checkMustNotMatchPatterns(rawHref))
+                return false;
 
             // 4.6. Rechazar parámetros sensibles (nombre exacto y contenido)
             for (const param of urlObj.searchParams.keys()) {
                 const lowerParam = param.toLowerCase();
-                if (SENSITIVE_PARAMS.has(lowerParam)) return false;
+                if (SENSITIVE_PARAMS.has(lowerParam))
+                    return false;
                 // Defensa extra: si el nombre del param contiene palabras sensibles (ej: access_token_key)
-                if ([...SENSITIVE_PARAMS].some(s => lowerParam.includes(s))) return false;
+                if ([...SENSITIVE_PARAMS].some(s => lowerParam.includes(s)))
+                    return false;
             }
 
             return true;
@@ -159,7 +169,7 @@
     function sanitizeUrl(urlObj) {
         try {
             const cleanUrl = new URL(urlObj.href);
-            
+
             // 5.1. Eliminar parámetros UTM y tracking exactos
             const paramsToDelete = [];
             cleanUrl.searchParams.forEach((value, key) => {
@@ -210,9 +220,9 @@
             'reloadIfOlderNumber': '30',
             'reloadIfOlderUnit': 'day',
             'cachePolicy': 'no cache',
-            'crawlOrder': 'off',  // MANTENER OFF: usuario explícitamente NO quiere mandar a otros nodos
+            'crawlOrder': 'off', // MANTENER OFF: usuario explícitamente NO quiere mandar a otros nodos
             'xsstopw': 'on',
-            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',  // Discreto para evitar CAPTCHAs
+            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)', // Discreto para evitar CAPTCHAs
             'ipMustnotmatch': ipMustnotmatch,
             'mustnotmatch': mustnotmatch
         });
@@ -222,13 +232,13 @@
 
     function sendToYaCy(targetUrl, attempt = 1) {
         if (attempt > MAX_RETRY_ATTEMPTS) {
-            console.error('[YaCy P2P] ❌ Falló después de ' + MAX_RETRY_ATTEMPTS + ' intentos');
-            isProcessing = false;  // Reset estado al fallar
+            console.error('[YaCy P2P] ? Falló después de ' + MAX_RETRY_ATTEMPTS + ' intentos');
+            isProcessing = false; // Reset estado al fallar
             return Promise.reject(new Error('Max retries exceeded'));
         }
 
         const apiUrl = buildYaCyParams(targetUrl);
-        
+
         // Configurar timeout y abort controller si es posible
         const timeoutId = setTimeout(() => {
             if (isProcessing && attempt < MAX_RETRY_ATTEMPTS) {
@@ -239,7 +249,7 @@
                     }
                 }, 1000 * Math.pow(2, attempt - 1)); // Backoff exponencial: 1s, 2s, 4s, 8s...
             } else if (attempt >= MAX_RETRY_ATTEMPTS) {
-                console.error('[YaCy P2P] ❌ Timeout final tras múltiples intentos');
+                console.error('[YaCy P2P] ? Timeout final tras múltiples intentos');
                 isProcessing = false;
             }
         }, REQ_TIMEOUT_MS);
@@ -248,8 +258,8 @@
             GM_xmlhttpRequest({
                 method: "GET",
                 url: apiUrl,
-                timeout: REQ_TIMEOUT_MS,  // Timeout nativo si está soportado
-                ontimeout: function() {
+                timeout: REQ_TIMEOUT_MS, // Timeout nativo si está soportado
+                ontimeout: function () {
                     clearTimeout(timeoutId);
                     if (isProcessing && attempt < MAX_RETRY_ATTEMPTS) {
                         console.warn('[YaCy P2P] Timeout nativo attempt ' + attempt + '/' + MAX_RETRY_ATTEMPTS);
@@ -264,14 +274,14 @@
                         reject(new Error('Request timeout'));
                     }
                 },
-                onload: function(response) {
+                onload: function (response) {
                     clearTimeout(timeoutId);
                     if (response.status === 200) {
-                        console.log('[YaCy P2P] 🕷️ URL indexada: ' + targetUrl);
-                        isProcessing = false;  // IMPORTANTE: reset estado al éxito
+                        console.log('[YaCy P2P] ??? URL indexada: ' + targetUrl);
+                        isProcessing = false; // IMPORTANTE: reset estado al éxito
                         resolve(response);
                     } else {
-                        console.warn('[YaCy P2P] ⚠️ YaCy respondió: ' + response.status);
+                        console.warn('[YaCy P2P] ?? YaCy respondió: ' + response.status);
                         if (isProcessing && attempt < MAX_RETRY_ATTEMPTS) {
                             setTimeout(() => {
                                 if (isProcessing) {
@@ -284,7 +294,7 @@
                         }
                     }
                 },
-                onerror: function(err) {
+                onerror: function (err) {
                     clearTimeout(timeoutId);
                     if (isProcessing && attempt < MAX_RETRY_ATTEMPTS) {
                         console.warn('[YaCy P2P] Error attempt ' + attempt + '/' + MAX_RETRY_ATTEMPTS + ': ' + err.message);
@@ -295,7 +305,7 @@
                         }, 1000 * Math.pow(2, attempt - 1));
                     } else {
                         isProcessing = false;
-                        console.error('[YaCy P2P] ❌ Error de conexión final: ' + err.message);
+                        console.error('[YaCy P2P] ? Error de conexión final: ' + err.message);
                         reject(err);
                     }
                 }
@@ -307,38 +317,41 @@
     // 7. PROCESAMÍNDICE PRINCIPAL (corregido)
     // ==========================================
     function scheduleIndex() {
-        if (isProcessing) return;  // Evita procesamiento concurrente
-        
+        if (isProcessing)
+            return; // Evita procesamiento concurrente
+
         const currentUrl = window.location.href;
-        if (currentUrl === lastProcessedUrl) return;  // Evita reprocesar la misma URL
-        
+        if (currentUrl === lastProcessedUrl)
+            return; // Evita reprocesar la misma URL
+
         lastProcessedUrl = currentUrl;
-        isProcessing = true;  // IMPORTANTE: establecer bandera antes de procesar
-        
+        isProcessing = true; // IMPORTANTE: establecer bandera antes de procesar
+
         // Pequeño delay para permitir que la URL se estabilice tras navegación
         setTimeout(processIndex, 500);
     }
 
     function processIndex() {
-        if (!isProcessing) return;  // Doble check de seguridad
-        
+        if (!isProcessing)
+            return; // Doble check de seguridad
+
         try {
             const currentUrlObj = new URL(window.location.href);
-            
+
             // Re-validar URL justo antes de enviar (maneja redirects durante delay)
             if (!isUrlSafe(currentUrlObj)) {
-                console.log("[YaCy P2P] 🛡️ URL omitida por políticas de privacidad (re-validada)");
+                console.log("[YaCy P2P] ??? URL omitida por políticas de privacidad (re-validada)");
                 isProcessing = false;
                 return;
             }
-            
+
             const cleanUrl = sanitizeUrl(currentUrlObj);
             if (!cleanUrl) {
                 console.error("[YaCy P2P] Error al sanitizar URL");
                 isProcessing = false;
                 return;
             }
-            
+
             // Esperar a que la página esté completamente cargada antes de enviar
             if (document.readyState !== 'complete') {
                 // Esperar hasta que esté completa
@@ -387,10 +400,10 @@
             // Si hay error al acceder a window.top (cross-origin), asumimos que estamos en iframe
             return;
         }
-        
+
         // Marcar carga inicial completada
         initialLoadComplete = true;
-        
+
         // Procesar URL inicial (no inmediatamente, para permitir carga de página)
         setTimeout(scheduleIndex, DELAY_MS);
     }
@@ -412,7 +425,7 @@
 
     // Soporte básico para pushState (sobrescribir para detectar cambios)
     const origPushState = history.pushState;
-    history.pushState = function(...args) {
+    history.pushState = function (...args) {
         origPushState.apply(this, args);
         // Pequeño delay para permitir que la URL se establezca
         setTimeout(() => {
@@ -428,8 +441,9 @@
     let prevHref = location.href;
     setInterval(() => {
         // Guard: no procesar si la pestaña está oculta (ahorra CPU)
-        if (document.hidden) return;
-        
+        if (document.hidden)
+            return;
+
         if (location.href !== prevHref) {
             prevHref = location.href;
             pollCounter++;
