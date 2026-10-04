@@ -12,7 +12,7 @@
 // @connect      127.0.0.1
 // @connect      localhost
 // @noframes
-// @license      CC-BY-NC-SS-4.0
+// @license      CC-BY-NC-SA-4.0
 // ==/UserScript==
 
 // ==UserScript==
