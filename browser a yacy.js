@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         browser a yacy (Auto + Manual + Snippets Canonical)
 // @namespace    jfdl19991
-// @version      1.7.1
+// @version      1.7.2
 // @description  Envía la página actual a un nodo YaCy local para indexar, protegiendo la privacidad. Indexador P2P, limpiador de trackers y extractor de snippets con vista previa y canonical.
 // @match        http://*/*
 // @match        https://*/*
@@ -339,7 +339,11 @@
 
         GM_registerMenuCommand("🕷️ Enviar URL a YaCy (Manual)", triggerManualIndex);
         GM_registerMenuCommand("✂️ Capturar Selección (Oro Puro)", captureSelection);
-
+        GM_registerMenuCommand("🔑 Resetear Credenciales de YaCy", function() {
+            GM_setValue('yacy_user', '');
+            GM_setValue('yacy_password', '');
+            alert("🔄 Credenciales de YaCy eliminadas. Se te pedirán de nuevo en el próximo envío.");
+        });
         triggerAutoEvaluation();
         const originalPushState = history.pushState;
         history.pushState = function (...args) { originalPushState.apply(this, args); triggerAutoEvaluation(); };
