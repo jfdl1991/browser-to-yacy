@@ -13,7 +13,9 @@
 // @connect      127.0.0.1
 // @connect      localhost
 // @noframes
-// @license      CC-BY-NC-SA-4.0
+// @license      AGPL-V3
+// @downloadURL https://update.greasyfork.org/scripts/598069/browser%20a%20yacy%20%28Auto%20%2B%20Manual%20%2B%20Snippets%20Canonical%29.user.js
+// @updateURL https://update.greasyfork.org/scripts/598069/browser%20a%20yacy%20%28Auto%20%2B%20Manual%20%2B%20Snippets%20Canonical%29.meta.js
 // ==/UserScript==
 
 // ==UserScript==
@@ -27,7 +29,7 @@
     // 1. CONFIGURACIÓN
     // ==========================================
     const YACY_HOST = GM_getValue('YACY_HOST', 'http://localhost:8090');
-    const DELAY_MS = 4000; 
+    const DELAY_MS = 4000;
     let debounceTimer = null;
     let lastSentUrl = '';
 
@@ -35,19 +37,19 @@
     // 2. LISTAS DE FILTRADO
     // ==========================================
     const BLACKLISTED_DOMAINS = new Set([
-        'localhost', 'google.com', 'docs.google.com', 'drive.google.com', 'mail.google.com', 
+        'localhost', 'google.com', 'docs.google.com', 'drive.google.com', 'mail.google.com',
         'notion.so', 'dropbox.com', 'onedrive.live.com', 'icloud.com', 'evernote.com',
-        'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'pinterest.com', 
-        'linkedin.com', 'tiktok.com', 'twitch.tv', 'medium.com', 'substack.com', 
-        'wordpress.com', 'blogspot.com', 'tumblr.com', 'netflix.com', 'paypal.com', 
+        'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'pinterest.com',
+        'linkedin.com', 'tiktok.com', 'twitch.tv', 'medium.com', 'substack.com',
+        'wordpress.com', 'blogspot.com', 'tumblr.com', 'netflix.com', 'paypal.com',
         'stripe.com', 'binance.com'
     ]);
 
     const SENSITIVE_KEYWORDS_PATTERNS = [
         'cart', 'checkout', 'account', 'login', 'signin', 'signup',
         'billing', 'payment', 'bank', 'card', 'tarjeta', 'pago',
-        'password', 'reset', 'verify', 'dashboard', 'admin', 'ssn', 
-        'passport', 'invoice', 'receipt', 'credit', 'loan', 'settings', 
+        'password', 'reset', 'verify', 'dashboard', 'admin', 'ssn',
+        'passport', 'invoice', 'receipt', 'credit', 'loan', 'settings',
         'logout', 'signout', 'privacy', 'profile', 'mail'
     ];
     const SENSITIVE_KEYWORDS_REGEX = new RegExp('\\b(' + SENSITIVE_KEYWORDS_PATTERNS.join('|') + ')\\b', 'i');
@@ -84,7 +86,7 @@
                 }
             });
             paramsToDelete.forEach(param => cleanUrl.searchParams.delete(param));
-            cleanUrl.hash = ''; 
+            cleanUrl.hash = '';
             return cleanUrl;
         } catch (e) { return null; }
     }
@@ -117,26 +119,31 @@
     // ==========================================
     // 4. NOTIFICACIONES Y ENVÍO API
     // ==========================================
-    function showToast(message, isError = false) {
-        const toast = document.createElement('div');
-        toast.textContent = message;
-        toast.style.cssText = `
-            position: fixed; bottom: 20px; right: 20px; z-index: 9999999;
-            background: ${isError ? '#e74c3c' : '#2ecc71'}; color: white;
-            padding: 12px 20px; border-radius: 8px; font-family: sans-serif;
-            font-size: 14px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            transition: opacity 0.5s; pointer-events: none;
-        `;
-        document.body.appendChild(toast);
-        setTimeout(() => { toast.style.opacity = '0'; }, 3000);
-        setTimeout(() => { toast.remove(); }, 3500);
-    }
-
     function sendToYaCy(targetUrl, isManual = false) {
+        // 1. Intentar obtener el usuario y contraseña guardados localmente
+        let usuario = GM_getValue('yacy_user');
+        let contrasena = GM_getValue('yacy_password');
+
+        // 2. Si no existen, los pregunta una única vez y los guarda en el navegador
+        if (!usuario || !contrasena) {
+            usuario = prompt("Configuración de YaCy: Introduce tu usuario administrador (ej: admin):");
+            contrasena = prompt("Configuración de YaCy: Introduce tu contraseña:");
+            
+            if (!usuario || !contrasena) {
+                if (isManual) showToast("❌ Configuración cancelada. No se pudo enviar a YaCy. YaCy necesita que le suministren usuario y contraseña para iniciar el crawler. Estos datos se guardan localmente y no abandonan su pc", true);
+                return; // Cancela si el usuario no rellena los datos
+            }
+            
+            // Guardar localmente de forma indefinida
+            GM_setValue('yacy_user', usuario);
+            GM_setValue('yacy_password', contrasena);
+        }
+
         const ipMustnotmatch = "(127\\.0\\.0\\.1|localhost|192\\.168\\..*|10\\..*|172\\.(1[6-9]|2[0-9]|3[0-1])\\..*|169\\.254\\..*|::1|fe80:|fc00:|fd00:)";
         const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
 
         const apiParams = new URLSearchParams({
+            'crawlingstart': '1',
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
@@ -151,21 +158,38 @@
             'mustnotmatch': mustnotmatch
         });
 
+        // Crear el token de autenticación con los datos recuperados o guardados
+        const tokenAutenticacion = "Basic " + btoa(usuario + ":" + contrasena);
+
+        // Registro en la consola de la URL que se va a enviar
+        console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
+
         GM_xmlhttpRequest({
-            method: "GET", 
-            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`, 
+            method: "GET",
+            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
+            headers: {
+                "Authorization": tokenAutenticacion
+            },
             timeout: 10000,
             onload: function (response) {
                 if (response.status === 200) {
                     lastSentUrl = targetUrl;
                     if (isManual) showToast("✅ URL enviada a YaCy");
-                } else if (isManual) { 
-                    showToast("❌ Error YaCy: " + response.status, true); 
+                } else {
+                    if (isManual) showToast("❌ Error YaCy: " + response.status, true);
+                    // Si el error es 401 (No autorizado), borramos los datos para que vuelva a preguntar la próxima vez
+                    if (response.status === 401) {
+                        GM_setValue('yacy_user', '');
+                        GM_setValue('yacy_password', '');
+                        console.warn("[YaCy Script] Error 401: Credenciales incorrectas. Se han borrado para volver a pedirlas.");
+                    }
                 }
+            },
+            onerror: function(err) {
+                if (isManual) showToast("❌ Error de conexión con YaCy", true);
             }
         });
-    }
-
+}
     // ==========================================
     // 5. VISTA PREVIA Y GUARDADO DE SNIPPETS
     // ==========================================
