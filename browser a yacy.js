@@ -60,6 +60,8 @@
         'id_token', 'refresh_token', 'password', 'pin', 'otp', 'mfa_code',
         'jwt', 'bearer'
     ]);
+    // Pre-compile sensitive param substring matching regex at module level to avoid allocations on every URL evaluation
+    const SENSITIVE_PARAMS_SUBSTRING_REGEX = new RegExp([...SENSITIVE_PARAMS].join('|'), 'i');
 
     const TRACKING_PARAMS_EXACT = new Set([
         'gclid', 'fbclid', 'msclkid', 'ref', 'source', 'mc_eid', 'si', 'igshid',
@@ -97,7 +99,8 @@
         if (SENSITIVE_KEYWORDS_REGEX.test(fullPath)) return true;
         for (const param of urlObj.searchParams.keys()) {
             const lowerParam = param.toLowerCase();
-            if (SENSITIVE_PARAMS.has(lowerParam) || [...SENSITIVE_PARAMS].some(s => lowerParam.includes(s))) return true;
+            // Fast Set lookup first; pre-compiled regex for substring checks eliminates array spreading allocations
+            if (SENSITIVE_PARAMS.has(lowerParam) || SENSITIVE_PARAMS_SUBSTRING_REGEX.test(lowerParam)) return true;
         }
         return false;
     }
@@ -107,7 +110,29 @@
     }
 
     function isDomainBlacklisted(hostname) {
-        return BLACKLISTED_DOMAINS.has(hostname) || [...BLACKLISTED_DOMAINS].some(domain => hostname.endsWith('.' + domain));
+        if (BLACKLISTED_DOMAINS.has(hostname)) return true;
+        // Direct iteration over Set avoids Array spreading [...BLACKLISTED_DOMAINS] on every navigation check
+        for (const domain of BLACKLISTED_DOMAINS) {
+            if (hostname.endsWith('.' + domain)) return true;
+        }
+        return false;
+    }
+
+    function showToast(message, isError = false) {
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed; bottom: 20px; right: 20px; padding: 12px 20px;
+            background: ${isError ? '#e74c3c' : '#2ecc71'}; color: #fff;
+            border-radius: 6px; font-family: sans-serif; font-size: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 9999999;
+            transition: opacity 0.3s ease;
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 
     function escapeHtml(str) {
