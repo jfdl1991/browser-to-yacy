@@ -70,7 +70,7 @@
     ]);
 
     const IP_PRIVATE_REGEX = /^(127\.|0\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|::1|fe80:|fc00:|fd00:)/i;
-    const LOCALHOST_REGEX = /^(localhost|[0-9]{1,3}\.local$|\.local$\vert{}intranet\vert{}internal\vert{}network)$/i;
+    const LOCALHOST_REGEX = /^(localhost|.*\.local|intranet|internal|network)$/i;
 
     // ==========================================
     // 3. SEGURIDAD Y SANITIZACIÓN
@@ -114,6 +114,31 @@
         return str.replace(/[&<>"']/g, function(m) {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
         });
+    }
+
+    function showToast(message, isError = false) {
+        try {
+            let toast = document.getElementById('yacy-toast-notification');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'yacy-toast-notification';
+                toast.style.cssText = `
+                    position: fixed; bottom: 20px; right: 20px; z-index: 9999999;
+                    padding: 12px 20px; border-radius: 8px; font-family: sans-serif;
+                    font-size: 14px; font-weight: bold; color: #fff;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.3s ease;
+                `;
+                document.body.appendChild(toast);
+            }
+            toast.style.backgroundColor = isError ? '#e74c3c' : '#2ecc71';
+            toast.textContent = message;
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                if (toast) toast.style.opacity = '0';
+            }, 4000);
+        } catch (e) {
+            console.log("[YaCy Toast]", message);
+        }
     }
 
     // ==========================================
