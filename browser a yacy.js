@@ -94,7 +94,8 @@
 
     function hasSensitiveData(urlObj) {
         if (urlObj.username || urlObj.password) return true;
-        const fullPath = (urlObj.pathname + urlObj.search).toLowerCase();
+        // Include urlObj.hash to prevent sensitive token/credential leakage in URL fragments (e.g., OAuth tokens, session hashes)
+        const fullPath = (urlObj.pathname + urlObj.search + urlObj.hash).toLowerCase();
         if (SENSITIVE_KEYWORDS_REGEX.test(fullPath)) return true;
         for (const param of urlObj.searchParams.keys()) {
             const lowerParam = param.toLowerCase();
@@ -252,10 +253,9 @@
         // Registro en la consola de la URL que se va a enviar
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
 
-        // Security: Use CrawlStart_p.html endpoint so YaCy processes security parameters (ipMustnotmatch, mustnotmatch)
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
+            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
             headers: {
                 "Authorization": tokenAutenticacion
             },

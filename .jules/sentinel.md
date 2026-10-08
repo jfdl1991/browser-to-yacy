@@ -1,4 +1,4 @@
-## 2025-10-08 - Use CrawlStart_p.html Endpoint for YaCy Crawl Security Policy Enforcement
-**Vulnerability:** Submitting crawl requests to `Crawler_p.html` rather than `CrawlStart_p.html` causes YaCy to ignore security parameters like `ipMustnotmatch` and `mustnotmatch`.
-**Learning:** `Crawler_p.html` is the status page UI for YaCy and ignores crawl initiation parameters, whereas `CrawlStart_p.html` is the CGI endpoint that parses and enforces `ipMustnotmatch` (private IP blocklist) and `mustnotmatch` (token/credential exclusion rules).
-**Prevention:** Always verify that API requests targeting YaCy crawler endpoints use `CrawlStart_p.html` to guarantee that server-side crawl security restrictions are enforced.
+## 2025-10-08 - Include URL Fragments (#hash) in Sensitive Data Sanitization Checks
+**Vulnerability:** `hasSensitiveData()` omitted `urlObj.hash` when constructing `fullPath`, allowing URLs with sensitive tokens in fragment identifiers (such as OAuth implicit grant `#access_token=...`, `#id_token=...`, `#session=...`) to bypass privacy filters.
+**Learning:** URL fragments are frequently used in modern Single Page Applications (SPAs) and authentication flows to transmit sensitive tokens, but standard path/search evaluations do not inspect `urlObj.hash`.
+**Prevention:** Always include `urlObj.hash` when evaluating URLs for sensitive parameters and credential patterns.
