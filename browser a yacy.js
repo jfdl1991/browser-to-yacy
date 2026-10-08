@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      *
@@ -117,23 +118,6 @@
         return false;
     }
 
-    function showToast(message, isError = false) {
-        const toast = document.createElement('div');
-        toast.textContent = message;
-        toast.style.cssText = `
-            position: fixed; bottom: 20px; right: 20px; padding: 12px 20px;
-            background: ${isError ? '#e74c3c' : '#2ecc71'}; color: #fff;
-            border-radius: 6px; font-family: sans-serif; font-size: 14px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 9999999;
-            transition: opacity 0.3s ease;
-        `;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
-
     function escapeHtml(str) {
         return str.replace(/[&<>"']/g, function(m) {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
@@ -230,13 +214,20 @@
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
+            'crawlingIfFileExists': 'override',
+            'crawlingPost': 'on',
+            'crawlingFilter': '.*',
+            'crawlingDomFilterDepth': '0',
+            'crawlingDomMaxPages': '10000',
             'indexText': 'on',
             'indexMedia': 'off',
             'storeHTCache': 'off',
             'crawlingQ': 'on',
             'recrawl': 'reload',
             'cachePolicy': 'no cache',
+            'crawlOrder': 'off',
             'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
+            'crawlingAgentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
             'ipMustnotmatch': ipMustnotmatch,
             'mustnotmatch': mustnotmatch
         });
@@ -254,7 +245,7 @@
 
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
+            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
             headers: {
                 "Authorization": tokenAutenticacion
             },
@@ -436,25 +427,34 @@
         triggerAutoEvaluation();
 
         // Soporte para Violentmonkey sandbox usando unsafeWindow cuando esté disponible
-        const win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+        const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
         const targetHistory = win.history || history;
 
         if (targetHistory) {
-            const originalPushState = targetHistory.pushState;
-            if (typeof originalPushState === 'function') {
-                targetHistory.pushState = function (...args) {
-                    const res = originalPushState.apply(this, args);
-                    triggerAutoEvaluation();
-                    return res;
-                };
+            try {
+                const originalPushState = targetHistory.pushState;
+                if (typeof originalPushState === 'function') {
+                    targetHistory.pushState = function (...args) {
+                        const res = originalPushState.apply(this, args);
+                        triggerAutoEvaluation();
+                        return res;
+                    };
+                }
+            } catch (e) {
+                console.warn("[YaCy Script] No se pudo envolver pushState:", e);
             }
-            const originalReplaceState = targetHistory.replaceState;
-            if (typeof originalReplaceState === 'function') {
-                targetHistory.replaceState = function (...args) {
-                    const res = originalReplaceState.apply(this, args);
-                    triggerAutoEvaluation();
-                    return res;
-                };
+
+            try {
+                const originalReplaceState = targetHistory.replaceState;
+                if (typeof originalReplaceState === 'function') {
+                    targetHistory.replaceState = function (...args) {
+                        const res = originalReplaceState.apply(this, args);
+                        triggerAutoEvaluation();
+                        return res;
+                    };
+                }
+            } catch (e) {
+                console.warn("[YaCy Script] No se pudo envolver replaceState:", e);
             }
         }
 
