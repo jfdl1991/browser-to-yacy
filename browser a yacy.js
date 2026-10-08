@@ -12,13 +12,12 @@
 // @grant        GM_registerMenuCommand
 // @connect      127.0.0.1
 // @connect      localhost
+// @connect      *
 // @noframes
 // @license      AGPL-V3
 // @downloadURL https://update.greasyfork.org/scripts/598069/browser%20a%20yacy%20%28Auto%20%2B%20Manual%20%2B%20Snippets%20Canonical%29.user.js
 // @updateURL https://update.greasyfork.org/scripts/598069/browser%20a%20yacy%20%28Auto%20%2B%20Manual%20%2B%20Snippets%20Canonical%29.meta.js
 // ==/UserScript==
-
-// ==UserScript==
 
 
 
@@ -72,7 +71,7 @@
     ]);
 
     const IP_PRIVATE_REGEX = /^(127\.|0\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|::1|fe80:|fc00:|fd00:)/i;
-    const LOCALHOST_REGEX = /^(localhost|[0-9]{1,3}\.local$|\.local$\vert{}intranet\vert{}internal\vert{}network)$/i;
+    const LOCALHOST_REGEX = /^(localhost|[0-9]{1,3}\.local$|\.local$|intranet|internal|network)$/i;
 
     // ==========================================
     // 3. SEGURIDAD Y SANITIZACIÓN
@@ -141,30 +140,89 @@
         });
     }
 
+    function showToast(message, isError = false) {
+        if (!document.body) return;
+        const existingContainer = document.getElementById('yacy-toast-container');
+        const container = existingContainer || document.createElement('div');
+        if (!existingContainer) {
+            container.id = 'yacy-toast-container';
+            container.style.cssText = `
+                position: fixed; bottom: 20px; right: 20px; z-index: 9999999;
+                display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            background: ${isError ? '#e74c3c' : '#2ecc71'}; color: #ffffff;
+            padding: 12px 18px; border-radius: 8px; font-family: sans-serif;
+            font-size: 14px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            opacity: 0; transition: opacity 0.3s ease, transform 0.3s ease;
+            transform: translateY(10px); pointer-events: auto;
+        `;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
+        });
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
+            setTimeout(() => {
+                toast.remove();
+                if (container.children.length === 0) {
+                    container.remove();
+                }
+            }, 300);
+        }, 3500);
+    }
+
     // ==========================================
     // 4. NOTIFICACIONES Y ENVÍO API
     // ==========================================
+    function configureCredentials() {
+        const usuario = prompt("Configuración de YaCy: Introduce tu usuario administrador (ej: admin):", GM_getValue('yacy_user', ''));
+        if (usuario === null) return false;
+        const contrasena = prompt("Configuración de YaCy: Introduce tu contraseña:", GM_getValue('yacy_password', ''));
+        if (contrasena === null) return false;
+
+        if (!usuario || !contrasena) {
+            showToast("❌ Usuario y contraseña son obligatorios.", true);
+            return false;
+        }
+
+        GM_setValue('yacy_user', usuario);
+        GM_setValue('yacy_password', contrasena);
+        showToast("🔑 Credenciales guardadas correctamente.");
+        return true;
+    }
+
     function sendToYaCy(targetUrl, isManual = false) {
         // 1. Intentar obtener el usuario y contraseña guardados localmente
         let usuario = GM_getValue('yacy_user');
         let contrasena = GM_getValue('yacy_password');
 
-        // 2. Si no existen, los pregunta una única vez y los guarda en el navegador
+        // 2. Si no existen, pedir solo si es acción manual o notificar silenciosamente si es auto
         if (!usuario || !contrasena) {
-            usuario = prompt("Configuración de YaCy: Introduce tu usuario administrador (ej: admin):");
-            contrasena = prompt("Configuración de YaCy: Introduce tu contraseña:");
-            
-            if (!usuario || !contrasena) {
-                if (isManual) showToast("❌ Configuración cancelada. No se pudo enviar a YaCy. YaCy necesita que le suministren usuario y contraseña para iniciar el crawler. Estos datos se guardan localmente y no abandonan su pc", true);
-                return; // Cancela si el usuario no rellena los datos
+            if (isManual) {
+                const configured = configureCredentials();
+                if (!configured) {
+                    showToast("❌ Configuración cancelada. No se pudo enviar a YaCy.", true);
+                    return;
+                }
+                usuario = GM_getValue('yacy_user');
+                contrasena = GM_getValue('yacy_password');
+            } else {
+                console.warn("[YaCy Script] Auto-evaluación omitida: Credenciales no configuradas. Usa el menú del script para configurarlas.");
+                return;
             }
-            
-            // Guardar localmente de forma indefinida
-            GM_setValue('yacy_user', usuario);
-            GM_setValue('yacy_password', contrasena);
         }
 
-        const ipMustnotmatch = "(127\\.0\\.0\\.1|localhost|192\\.168\\..*|10\\..*|172\\.(1[6-9]|2[0-9]|3[0-1])\\..*|169\\.254\\..*|::1|fe80:|fc00:|fd00:)";
+        const ipMustnotmatch = "(127\\.0\\.0\\.1|localhost|192\\.168\\..*|10\\..*|172\\.(1[6-9]|2[0-9]|3[0-1])\\..*|169\\.254\\..*|100\\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\\..*|::1|fe80:|fc00:|fd00:)";
         const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
 
         const apiParams = new URLSearchParams({
@@ -183,8 +241,13 @@
             'mustnotmatch': mustnotmatch
         });
 
-        // Crear el token de autenticación con los datos recuperados o guardados
-        const tokenAutenticacion = "Basic " + btoa(usuario + ":" + contrasena);
+        // Crear el token de autenticación con los datos recuperados o guardados (compatible con UTF-8)
+        function utf8ToBase64(str) {
+            return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
+                return String.fromCharCode('0x' + p1);
+            }));
+        }
+        const tokenAutenticacion = "Basic " + utf8ToBase64(usuario + ":" + contrasena);
 
         // Registro en la consola de la URL que se va a enviar
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
@@ -364,16 +427,37 @@
 
         GM_registerMenuCommand("🕷️ Enviar URL a YaCy (Manual)", triggerManualIndex);
         GM_registerMenuCommand("✂️ Capturar Selección (Oro Puro)", captureSelection);
-        GM_registerMenuCommand("🔑 Resetear Credenciales de YaCy", function() {
+        GM_registerMenuCommand("🔑 Configurar Credenciales de YaCy", configureCredentials);
+        GM_registerMenuCommand("🔄 Resetear Credenciales de YaCy", function() {
             GM_setValue('yacy_user', '');
             GM_setValue('yacy_password', '');
-            alert("🔄 Credenciales de YaCy eliminadas. Se te pedirán de nuevo en el próximo envío.");
+            showToast("🔄 Credenciales de YaCy eliminadas.");
         });
         triggerAutoEvaluation();
-        const originalPushState = history.pushState;
-        history.pushState = function (...args) { originalPushState.apply(this, args); triggerAutoEvaluation(); };
-        const originalReplaceState = history.replaceState;
-        history.replaceState = function (...args) { originalReplaceState.apply(this, args); triggerAutoEvaluation(); };
+
+        // Soporte para Violentmonkey sandbox usando unsafeWindow cuando esté disponible
+        const win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+        const targetHistory = win.history || history;
+
+        if (targetHistory) {
+            const originalPushState = targetHistory.pushState;
+            if (typeof originalPushState === 'function') {
+                targetHistory.pushState = function (...args) {
+                    const res = originalPushState.apply(this, args);
+                    triggerAutoEvaluation();
+                    return res;
+                };
+            }
+            const originalReplaceState = targetHistory.replaceState;
+            if (typeof originalReplaceState === 'function') {
+                targetHistory.replaceState = function (...args) {
+                    const res = originalReplaceState.apply(this, args);
+                    triggerAutoEvaluation();
+                    return res;
+                };
+            }
+        }
+
         window.addEventListener('popstate', triggerAutoEvaluation);
         window.addEventListener('hashchange', triggerAutoEvaluation);
     }
