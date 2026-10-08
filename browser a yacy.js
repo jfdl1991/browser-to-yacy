@@ -252,9 +252,10 @@
         // Registro en la consola de la URL que se va a enviar
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
 
+        // Security: Use CrawlStart_p.html endpoint so YaCy processes security parameters (ipMustnotmatch, mustnotmatch)
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
+            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
             headers: {
                 "Authorization": tokenAutenticacion
             },

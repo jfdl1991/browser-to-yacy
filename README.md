@@ -15,7 +15,7 @@ Este Userscript de Tampermonkey detecta las páginas públicas que navegas activ
 ## Modos de Operación
 
 ### 1. Indexación Automática / Manual de URLs
-Envía la URL actual limpia a la API de rastreo web de YaCy (`Crawler_p.html`). YaCy descarga la página web con su propio motor.
+Envía la URL actual limpia a la API de rastreo web de YaCy (`CrawlStart_p.html`). YaCy descarga la página web con su propio motor.
 
 ### 2. Captura de Snippets de Oro (Extractor Local)
 Permite seleccionar texto o contenido en cualquier sitio web y guardarlo como un archivo HTML optimizado.
