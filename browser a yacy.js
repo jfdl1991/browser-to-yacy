@@ -80,10 +80,16 @@
     function sanitizeUrl(urlObj) {
         try {
             const cleanUrl = new URL(urlObj.href);
+            // Security: Strip embedded credentials to prevent leaking sensitive auth info
+            cleanUrl.username = '';
+            cleanUrl.password = '';
             const paramsToDelete = [];
             cleanUrl.searchParams.forEach((value, key) => {
                 const lowerKey = key.toLowerCase();
-                if (lowerKey.startsWith('utm_') || TRACKING_PARAMS_EXACT.has(lowerKey) || value.length > 256) {
+                // Security & Privacy: Remove tracking params and sensitive keys/tokens
+                if (lowerKey.startsWith('utm_') || TRACKING_PARAMS_EXACT.has(lowerKey) ||
+                    SENSITIVE_PARAMS.has(lowerKey) || SENSITIVE_PARAMS_SUBSTRING_REGEX.test(lowerKey) ||
+                    value.length > 256) {
                     paramsToDelete.push(key);
                 }
             });
