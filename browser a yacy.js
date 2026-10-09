@@ -110,13 +110,18 @@
     }
 
     function isDomainBlacklisted(hostname) {
-        if (BLACKLISTED_DOMAINS.has(hostname)) return true;
+        if (!hostname) return false;
+        let cleanHost = hostname.toLowerCase();
+        if (cleanHost.endsWith('.')) {
+            cleanHost = cleanHost.slice(0, -1);
+        }
+        if (BLACKLISTED_DOMAINS.has(cleanHost)) return true;
         // Subdomain hierarchy slicing and O(1) Set lookups avoid string concatenation allocations
         // ('.' + domain) and linear scans over BLACKLISTED_DOMAINS on every navigation check (~7x speedup).
-        let dotIdx = hostname.indexOf('.');
+        let dotIdx = cleanHost.indexOf('.');
         while (dotIdx !== -1) {
-            if (BLACKLISTED_DOMAINS.has(hostname.slice(dotIdx + 1))) return true;
-            dotIdx = hostname.indexOf('.', dotIdx + 1);
+            if (BLACKLISTED_DOMAINS.has(cleanHost.slice(dotIdx + 1))) return true;
+            dotIdx = cleanHost.indexOf('.', dotIdx + 1);
         }
         return false;
     }
@@ -188,12 +193,16 @@
         return true;
     }
 
-    function sendToYaCy(targetUrl, isManual = false) {
-        // 1. Intentar obtener el usuario y contraseña guardados localmente
-        let usuario = GM_getValue('yacy_user');
-        let contrasena = GM_getValue('yacy_password');
+    function utf8ToBase64(str) {
+        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
+            return String.fromCharCode('0x' + p1);
+        }));
+    }
 
-        // 2. Si no existen, pedir solo si es acción manual o notificar silenciosamente si es auto
+    function sendToYaCy(targetUrl, isManual = false, retryCount = 0) {
+        let usuario = GM_getValue('yacy_user', '');
+        let contrasena = GM_getValue('yacy_password', '');
+
         if (!usuario || !contrasena) {
             if (isManual) {
                 const configured = configureCredentials();
@@ -201,11 +210,8 @@
                     showToast("❌ Configuración cancelada. No se pudo enviar a YaCy.", true);
                     return;
                 }
-                usuario = GM_getValue('yacy_user');
-                contrasena = GM_getValue('yacy_password');
-            } else {
-                console.warn("[YaCy Script] Auto-evaluación omitida: Credenciales no configuradas. Usa el menú del script para configurarlas.");
-                return;
+                usuario = GM_getValue('yacy_user', '');
+                contrasena = GM_getValue('yacy_password', '');
             }
         }
 
@@ -213,11 +219,10 @@
         const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
 
         const apiParams = new URLSearchParams({
-            'crawlingstart': '1',
+            'crawlingstart': 'on',
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
-            'crawlingIfFileExists': 'override',
             'crawlingPost': 'on',
             'crawlingFilter': '.*',
             'crawlingDomFilterDepth': '0',
@@ -229,49 +234,61 @@
             'recrawl': 'reload',
             'cachePolicy': 'no cache',
             'crawlOrder': 'off',
-            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
-            'crawlingAgentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
+            'agentName': 'Custom Agent',
             'ipMustnotmatch': ipMustnotmatch,
             'mustnotmatch': mustnotmatch
         });
 
-        // Crear el token de autenticación con los datos recuperados o guardados (compatible con UTF-8)
-        function utf8ToBase64(str) {
-            return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(match, p1) {
-                return String.fromCharCode('0x' + p1);
-            }));
+        const headers = {};
+        if (usuario && contrasena) {
+            headers["Authorization"] = "Basic " + utf8ToBase64(usuario + ":" + contrasena);
         }
-        const tokenAutenticacion = "Basic " + utf8ToBase64(usuario + ":" + contrasena);
 
-        // Registro en la consola de la URL que se va a enviar
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
 
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
-            headers: {
-                "Authorization": tokenAutenticacion
-            },
-            timeout: 10000,
+            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
+            headers: headers,
+            timeout: 15000,
             onload: function (response) {
                 if (response.status === 200) {
                     lastSentUrl = targetUrl;
                     if (isManual) showToast("✅ URL enviada a YaCy");
-                } else {
-                    if (isManual) showToast("❌ Error YaCy: " + response.status, true);
-                    // Si el error es 401 (No autorizado), borramos los datos para que vuelva a preguntar la próxima vez
-                    if (response.status === 401) {
+                } else if (response.status === 401) {
+                    if (usuario || contrasena) {
                         GM_setValue('yacy_user', '');
                         GM_setValue('yacy_password', '');
-                        console.warn("[YaCy Script] Error 401: Credenciales incorrectas. Se han borrado para volver a pedirlas.");
+                        console.warn("[YaCy Script] Error 401: Credenciales incorrectas. Se han borrado.");
+                    }
+                    if (isManual) showToast("❌ Error YaCy 401: Credenciales incorrectas", true);
+                } else {
+                    if (retryCount < 3 && (response.status >= 500 || response.status === 0)) {
+                        const backoff = Math.pow(2, retryCount) * 1000;
+                        setTimeout(() => sendToYaCy(targetUrl, isManual, retryCount + 1), backoff);
+                    } else {
+                        if (isManual) showToast("❌ Error YaCy: " + response.status, true);
                     }
                 }
             },
             onerror: function(err) {
-                if (isManual) showToast("❌ Error de conexión con YaCy", true);
+                if (retryCount < 3) {
+                    const backoff = Math.pow(2, retryCount) * 1000;
+                    setTimeout(() => sendToYaCy(targetUrl, isManual, retryCount + 1), backoff);
+                } else {
+                    if (isManual) showToast("❌ Error de conexión con YaCy", true);
+                }
+            },
+            ontimeout: function() {
+                if (retryCount < 3) {
+                    const backoff = Math.pow(2, retryCount) * 1000;
+                    setTimeout(() => sendToYaCy(targetUrl, isManual, retryCount + 1), backoff);
+                } else {
+                    if (isManual) showToast("❌ Tiempo de espera agotado al conectar con YaCy", true);
+                }
             }
         });
-}
+    }
     // ==========================================
     // 5. VISTA PREVIA Y GUARDADO DE SNIPPETS
     // ==========================================
@@ -295,37 +312,77 @@
         `;
 
         const date = new Date().toLocaleString();
-        const safeTitle = escapeHtml(pageTitle);
-        const safeUrl = escapeHtml(sourceUrl);
 
-        modalContainer.innerHTML = `
-            <div style="padding: 15px 20px; background: #2c3e50; color: #ffffff; display: flex; justify-content: space-between; align-items: center;">
-                <h3 style="margin: 0; font-size: 16px;">Vista Previa del Snippet - YaCy</h3>
-                <span id="yacy-close-x" style="cursor: pointer; font-size: 20px; font-weight: bold;">&times;</span>
-            </div>
-            <div style="padding: 15px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; font-size: 13px;">
-                <strong>Título:</strong> ${safeTitle}<br>
-                <strong>Fuente Canonical:</strong> ${safeUrl}<br>
-                <strong>Capturado:</strong> ${date}
-            </div>
-            <div id="yacy-snippet-body" style="padding: 20px; overflow-y: auto; flex-grow: 1; border-bottom: 1px solid #e9ecef; background: #ffffff;">
-                ${htmlContent}
-            </div>
-            <div style="padding: 15px 20px; background: #f8f9fa; display: flex; justify-content: flex-end; gap: 10px;">
-                <button id="yacy-btn-cancel" style="padding: 8px 16px; border: none; background: #e74c3c; color: white; border-radius: 6px; cursor: pointer; font-weight: bold;">Cancelar</button>
-                <button id="yacy-btn-confirm" style="padding: 8px 16px; border: none; background: #2ecc71; color: white; border-radius: 6px; cursor: pointer; font-weight: bold;">Confirmar y Descargar HTML</button>
-            </div>
-        `;
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText = 'padding: 15px 20px; background: #2c3e50; color: #ffffff; display: flex; justify-content: space-between; align-items: center;';
+        const h3 = document.createElement('h3');
+        h3.style.cssText = 'margin: 0; font-size: 16px;';
+        h3.textContent = 'Vista Previa del Snippet - YaCy';
+        const closeX = document.createElement('span');
+        closeX.style.cssText = 'cursor: pointer; font-size: 20px; font-weight: bold;';
+        closeX.textContent = '×';
+        header.appendChild(h3);
+        header.appendChild(closeX);
+
+        // Metadata box
+        const metaBox = document.createElement('div');
+        metaBox.style.cssText = 'padding: 15px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; font-size: 13px;';
+
+        const titleDiv = document.createElement('div');
+        const titleStrong = document.createElement('strong');
+        titleStrong.textContent = 'Título: ';
+        titleDiv.appendChild(titleStrong);
+        titleDiv.appendChild(document.createTextNode(pageTitle));
+
+        const urlDiv = document.createElement('div');
+        const urlStrong = document.createElement('strong');
+        urlStrong.textContent = 'Fuente Canonical: ';
+        urlDiv.appendChild(urlStrong);
+        urlDiv.appendChild(document.createTextNode(sourceUrl));
+
+        const dateDiv = document.createElement('div');
+        const dateStrong = document.createElement('strong');
+        dateStrong.textContent = 'Capturado: ';
+        dateDiv.appendChild(dateStrong);
+        dateDiv.appendChild(document.createTextNode(date));
+
+        metaBox.appendChild(titleDiv);
+        metaBox.appendChild(urlDiv);
+        metaBox.appendChild(dateDiv);
+
+        // Snippet Content Body
+        const bodyDiv = document.createElement('div');
+        bodyDiv.style.cssText = 'padding: 20px; overflow-y: auto; flex-grow: 1; border-bottom: 1px solid #e9ecef; background: #ffffff;';
+        bodyDiv.innerHTML = htmlContent;
+
+        // Footer buttons
+        const footer = document.createElement('div');
+        footer.style.cssText = 'padding: 15px 20px; background: #f8f9fa; display: flex; justify-content: flex-end; gap: 10px;';
+
+        const btnCancel = document.createElement('button');
+        btnCancel.style.cssText = 'padding: 8px 16px; border: none; background: #e74c3c; color: white; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        btnCancel.textContent = 'Cancelar';
+
+        const btnConfirm = document.createElement('button');
+        btnConfirm.style.cssText = 'padding: 8px 16px; border: none; background: #2ecc71; color: white; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        btnConfirm.textContent = 'Confirmar y Descargar HTML';
+
+        footer.appendChild(btnCancel);
+        footer.appendChild(btnConfirm);
+
+        modalContainer.appendChild(header);
+        modalContainer.appendChild(metaBox);
+        modalContainer.appendChild(bodyDiv);
+        modalContainer.appendChild(footer);
 
         modalOverlay.appendChild(modalContainer);
         document.body.appendChild(modalOverlay);
 
         const closeModal = () => modalOverlay.remove();
-
-        document.getElementById('yacy-close-x').onclick = closeModal;
-        document.getElementById('yacy-btn-cancel').onclick = closeModal;
-
-        document.getElementById('yacy-btn-confirm').onclick = () => {
+        closeX.onclick = closeModal;
+        btnCancel.onclick = closeModal;
+        btnConfirm.onclick = () => {
             saveHtmlFile(htmlContent, sourceUrl, pageTitle, date);
             closeModal();
         };
@@ -429,40 +486,18 @@
         });
         triggerAutoEvaluation();
 
-        // Soporte para Violentmonkey sandbox usando unsafeWindow cuando esté disponible
-        const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
-        const targetHistory = win.history || history;
-
-        if (targetHistory) {
-            try {
-                const originalPushState = targetHistory.pushState;
-                if (typeof originalPushState === 'function') {
-                    targetHistory.pushState = function (...args) {
-                        const res = originalPushState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
-                }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver pushState:", e);
-            }
-
-            try {
-                const originalReplaceState = targetHistory.replaceState;
-                if (typeof originalReplaceState === 'function') {
-                    targetHistory.replaceState = function (...args) {
-                        const res = originalReplaceState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
-                }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver replaceState:", e);
-            }
-        }
-
+        // Listeners standard para eventos de navegación
         window.addEventListener('popstate', triggerAutoEvaluation);
         window.addEventListener('hashchange', triggerAutoEvaluation);
+
+        // Polling ligero para SPAs que cambian la URL sin emitir eventos estándar de navegación
+        let currentSpaUrl = window.location.href;
+        setInterval(() => {
+            if (window.location.href !== currentSpaUrl) {
+                currentSpaUrl = window.location.href;
+                triggerAutoEvaluation();
+            }
+        }, 3000);
     }
 
     init();

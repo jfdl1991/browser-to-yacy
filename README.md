@@ -15,7 +15,7 @@ Este Userscript de Tampermonkey detecta las páginas públicas que navegas activ
 ## Modos de Operación
 
 ### 1. Indexación Automática / Manual de URLs
-Envía la URL actual limpia a la API de rastreo web de YaCy (`CrawlStart_p.html`). YaCy descarga la página web con su propio motor.
+Envía la URL actual limpia a la API de rastreo web de YaCy (`Crawler_p.html`). YaCy descarga la página web con su propio motor.
 
 ### 2. Captura de Snippets de Oro (Extractor Local)
 Permite seleccionar texto o contenido en cualquier sitio web y guardarlo como un archivo HTML optimizado.
@@ -30,7 +30,7 @@ Permite seleccionar texto o contenido en cualquier sitio web y guardarlo como un
 El script interactúa directamente con la API de YaCy. Para revisar o ajustar tu nodo, accede a:
 
 ```text
-http://localhost:8090/CrawlStart_p.html
+http://localhost:8090/Crawler_p.html
 
 ```
 
@@ -49,7 +49,8 @@ http://localhost:8090/CrawlStart_p.html
 - ✅ **Zero-Leak**: bloquea IPs locales (`localhost`, `192.168.*`, `10.*`, `172.16-31.*`, `169.254.*`), credenciales embebidas (`usuario:contraseña`), dominios sensibles, y parámetros con datos privados (`token`, `auth`, `session`, etc.).
 - ✅ **Sanitización**: elimina rastreadores (`utm_*`, `fbclid`, `gclid`, etc.) y fragmentos de URL (`#...`).
 - ✅ **Anti-DDoS / Anti-CAPTCHA**: retraso de 3.5 segundos entre envíos y límite de ~30 segundos entre cada indexación.
-- ✅ **SPA Navigation**: detecta cambios en apps modernas (React, Vue, Angular) sin recargar la página.
+- ✅ **SPA Navigation**: detecta cambios en apps modernas (React, Vue, Angular) mediante eventos y polling seguro sin alterar el prototipo de `history`.
+- ✅ **Soporte Violentmonkey / Tampermonkey**: compatible con entornos sandbox aislados y estrictas políticas CSP.
 - ✅ **Retry con backoff exponencial**: si YaCy no responde, reintenta automáticamente (hasta 3 veces) con espera creciente (1s, 2s, 4s).
 - ✅ **Timeout**: cada petición tiene un límite de 15 segundos para evitar bloqueos.
 - ✅ **No envía cookies** ni encabezados sensibles al nodo YaCy.
