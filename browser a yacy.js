@@ -32,6 +32,8 @@
     const DELAY_MS = 4000;
     let debounceTimer = null;
     let lastSentUrl = '';
+    let hasWarnedCredentials = false;
+    let isProcessing = false;
 
     // ==========================================
     // 2. LISTAS DE FILTRADO
@@ -204,6 +206,10 @@
                 usuario = GM_getValue('yacy_user');
                 contrasena = GM_getValue('yacy_password');
             } else {
+                if (!hasWarnedCredentials) {
+                    hasWarnedCredentials = true;
+                    showToast("⚠ Credenciales de YaCy no configuradas. Usa el menú del script para configurarlas.", true);
+                }
                 console.warn("[YaCy Script] Auto-evaluación omitida: Credenciales no configuradas. Usa el menú del script para configurarlas.");
                 return;
             }
@@ -213,7 +219,7 @@
         const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
 
         const apiParams = new URLSearchParams({
-            'crawlingstart': '1',
+            'crawlingstart': 'on',
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
@@ -222,6 +228,9 @@
             'crawlingFilter': '.*',
             'crawlingDomFilterDepth': '0',
             'crawlingDomMaxPages': '10000',
+            'mustmatch': '.*',
+            'xsstopw': 'on',
+            'noindexWhenCanonicalUnequalURL': 'on',
             'indexText': 'on',
             'indexMedia': 'off',
             'storeHTCache': 'off',
@@ -229,8 +238,8 @@
             'recrawl': 'reload',
             'cachePolicy': 'no cache',
             'crawlOrder': 'off',
-            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
-            'crawlingAgentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
+            'agentName': 'Custom Agent',
+            'crawlingAgentName': 'Custom Agent',
             'ipMustnotmatch': ipMustnotmatch,
             'mustnotmatch': mustnotmatch
         });
@@ -243,35 +252,69 @@
         }
         const tokenAutenticacion = "Basic " + utf8ToBase64(usuario + ":" + contrasena);
 
-        // Registro en la consola de la URL que se va a enviar
+        if (isProcessing) {
+            console.warn("[YaCy Script] Envío omitido: Ya hay una petición en curso.");
+            return;
+        }
+
+        isProcessing = true;
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
 
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
-            headers: {
-                "Authorization": tokenAutenticacion
-            },
-            timeout: 10000,
-            onload: function (response) {
-                if (response.status === 200) {
-                    lastSentUrl = targetUrl;
-                    if (isManual) showToast("✅ URL enviada a YaCy");
-                } else {
-                    if (isManual) showToast("❌ Error YaCy: " + response.status, true);
-                    // Si el error es 401 (No autorizado), borramos los datos para que vuelva a preguntar la próxima vez
-                    if (response.status === 401) {
+        function attemptSend(attempt) {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
+                headers: {
+                    "Authorization": tokenAutenticacion
+                },
+                timeout: 15000,
+                onload: function (response) {
+                    if (response.status === 200) {
+                        lastSentUrl = targetUrl;
+                        isProcessing = false;
+                        if (isManual) showToast("✅ URL enviada a YaCy");
+                    } else if (response.status === 401) {
+                        isProcessing = false;
                         GM_setValue('yacy_user', '');
                         GM_setValue('yacy_password', '');
-                        console.warn("[YaCy Script] Error 401: Credenciales incorrectas. Se han borrado para volver a pedirlas.");
+                        showToast("❌ Error 401: Credenciales de YaCy incorrectas.", true);
+                        console.warn("[YaCy Script] Error 401: Credenciales incorrectas. Se han borrado.");
+                    } else {
+                        if (attempt < 3) {
+                            const delay = Math.pow(2, attempt - 1) * 1000;
+                            console.warn(`[YaCy Script] Intento ${attempt} falló (status ${response.status}). Reintentando en ${delay}ms...`);
+                            setTimeout(() => attemptSend(attempt + 1), delay);
+                        } else {
+                            isProcessing = false;
+                            if (isManual) showToast("❌ Error YaCy: " + response.status, true);
+                        }
+                    }
+                },
+                onerror: function (err) {
+                    if (attempt < 3) {
+                        const delay = Math.pow(2, attempt - 1) * 1000;
+                        console.warn(`[YaCy Script] Intento ${attempt} falló por error de red/conexión. Reintentando en ${delay}ms...`);
+                        setTimeout(() => attemptSend(attempt + 1), delay);
+                    } else {
+                        isProcessing = false;
+                        if (isManual) showToast("❌ Error de conexión con YaCy", true);
+                    }
+                },
+                ontimeout: function () {
+                    if (attempt < 3) {
+                        const delay = Math.pow(2, attempt - 1) * 1000;
+                        console.warn(`[YaCy Script] Intento ${attempt} expiró por timeout (15s). Reintentando en ${delay}ms...`);
+                        setTimeout(() => attemptSend(attempt + 1), delay);
+                    } else {
+                        isProcessing = false;
+                        if (isManual) showToast("❌ Tiempo de espera agotado al conectar con YaCy", true);
                     }
                 }
-            },
-            onerror: function(err) {
-                if (isManual) showToast("❌ Error de conexión con YaCy", true);
-            }
-        });
-}
+            });
+        }
+
+        attemptSend(1);
+    }
     // ==========================================
     // 5. VISTA PREVIA Y GUARDADO DE SNIPPETS
     // ==========================================
@@ -429,36 +472,34 @@
         });
         triggerAutoEvaluation();
 
-        // Soporte para Violentmonkey sandbox usando unsafeWindow cuando esté disponible
+        // Soporte para Violentmonkey y Tampermonkey en la interceptación de navegación SPA
         const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
         const targetHistory = win.history || history;
 
         if (targetHistory) {
-            try {
-                const originalPushState = targetHistory.pushState;
-                if (typeof originalPushState === 'function') {
-                    targetHistory.pushState = function (...args) {
-                        const res = originalPushState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
+            const wrapHistoryMethod = (methodName) => {
+                try {
+                    const originalMethod = targetHistory[methodName];
+                    if (typeof originalMethod === 'function') {
+                        targetHistory[methodName] = function (...args) {
+                            let result;
+                            try {
+                                result = Reflect.apply(originalMethod, this, args);
+                            } catch (err) {
+                                // Fallback para navegadores o sandboxes donde Reflect.apply falle
+                                result = originalMethod.apply(this, args);
+                            }
+                            triggerAutoEvaluation();
+                            return result;
+                        };
+                    }
+                } catch (e) {
+                    console.warn(`[YaCy Script] No se pudo envolver ${methodName}:`, e);
                 }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver pushState:", e);
-            }
+            };
 
-            try {
-                const originalReplaceState = targetHistory.replaceState;
-                if (typeof originalReplaceState === 'function') {
-                    targetHistory.replaceState = function (...args) {
-                        const res = originalReplaceState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
-                }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver replaceState:", e);
-            }
+            wrapHistoryMethod('pushState');
+            wrapHistoryMethod('replaceState');
         }
 
         window.addEventListener('popstate', triggerAutoEvaluation);
