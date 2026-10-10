@@ -332,13 +332,18 @@
     }
 
     function saveHtmlFile(htmlContent, sourceUrl, pageTitle, date) {
+        // Escaping sourceUrl and date prevents HTML/attribute injection vulnerabilities when downloading local HTML snippets
+        const safeUrl = escapeHtml(sourceUrl);
+        const safeDate = escapeHtml(date);
+        const safeTitle = escapeHtml(pageTitle);
+
         const finalHtml = `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>${escapeHtml(pageTitle)}</title>
-    <link rel="canonical" href="${sourceUrl}">
-    <base href="${sourceUrl}">
+    <title>${safeTitle}</title>
+    <link rel="canonical" href="${safeUrl}">
+    <base href="${safeUrl}">
     <style>
         body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #222; }
         .metadata { background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.9em; border-left: 4px solid #2ecc71; }
@@ -347,9 +352,9 @@
 </head>
 <body>
     <div class="metadata">
-        <h2>${escapeHtml(pageTitle)}</h2>
-        <p><strong>Fuente Original:</strong> <a href="${sourceUrl}">${sourceUrl}</a></p>
-        <p><strong>Capturado el:</strong> ${date}</p>
+        <h2>${safeTitle}</h2>
+        <p><strong>Fuente Original:</strong> <a href="${safeUrl}">${safeUrl}</a></p>
+        <p><strong>Capturado el:</strong> ${safeDate}</p>
     </div>
     <div class="content">
         ${htmlContent}
