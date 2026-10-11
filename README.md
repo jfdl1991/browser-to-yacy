@@ -15,7 +15,7 @@ Este Userscript de Tampermonkey detecta las páginas públicas que navegas activ
 ## Modos de Operación
 
 ### 1. Indexación Automática / Manual de URLs
-Envía la URL actual limpia a la API de rastreo web de YaCy (`CrawlStart_p.html`). YaCy descarga la página web con su propio motor.
+Envía la URL actual limpia a la API de rastreo web de YaCy (`Crawler_p.html`). YaCy descarga la página web con su propio motor.
 
 ### 2. Captura de Snippets de Oro (Extractor Local)
 Permite seleccionar texto o contenido en cualquier sitio web y guardarlo como un archivo HTML optimizado.
@@ -30,7 +30,7 @@ Permite seleccionar texto o contenido en cualquier sitio web y guardarlo como un
 El script interactúa directamente con la API de YaCy. Para revisar o ajustar tu nodo, accede a:
 
 ```text
-http://localhost:8090/CrawlStart_p.html
+http://localhost:8090/Crawler_p.html
 
 ```
 
@@ -39,8 +39,10 @@ http://localhost:8090/CrawlStart_p.html
 - `indexText = on`: extrae texto de la página.
 - `storeHTCache = off`: no guarda HTML en disco (privacidad y espacio).
 - `crawlingQ = on`: encola la petición en segundo plano.
-- `agentName`: usa un nombre discreto (como `Mozilla/5.0`) para evitar bloqueos.
+- `agentName`: usa un nombre reconocido como `Custom Agent` (o `Random Browser`) configurado en el nodo.
 - `crawlOrder`: `off` (el script mantiene esta configuración para no delegar a otros nodos sin autorización).
+- `xsstopw = on`: activa el filtrado de palabras vacías (stopwords).
+- `recrawl = reload`: reindexa páginas refrescando su contenido según `reloadIfOlderNumber=1` y `reloadIfOlderUnit=day`.
 
 ---
 
@@ -59,8 +61,8 @@ http://localhost:8090/CrawlStart_p.html
 
 ## Instalación (para usuarios normales)
 
-1. Instala Tampermonkey (o Greasemonkey) en tu navegador.
-2. Abre este archivo (`browser a yacy v1.2.2.js`) y cópialo como un nuevo Userscript.
+1. Instala Violentmonkey, Tampermonkey (o Greasemonkey) en tu navegador.
+2. Abre este archivo (`browser a yacy.js`) y cópialo como un nuevo Userscript.
 3. Asegúrate de que tu nodo YaCy esté corriendo en `http://localhost:8090`.
 4. Configura (opcional): si tu YaCy está en otra IP/puerto, usa `GM_getValue('YACY_HOST', ...)` o edita el script — busca la constante `YACY_HOST`.
 
@@ -95,12 +97,13 @@ El archivo (`browser a yacy v1.2.2.js`) está organizado en secciones claras:
 
 ## Nota para desarrolladores
 
-El código está escrito en JavaScript puro para Tampermonkey. No requiere compilación, no usa librerías externas, y funciona en Chrome, Firefox y Brave (con la extensión Tampermonkey instalada).
+El código está escrito en JavaScript puro compatible con Violentmonkey y Tampermonkey. No requiere compilación, no usa librerías externas, y funciona en Chrome, Firefox y Brave (con la extensión Violentmonkey o Tampermonkey instalada).
 
 ---
 
 ## Versión
 
+- `v1.7.3` Corrección de endpoint API (`/Crawler_p.html`), `agentName='Custom Agent'`, parámetros `mustmatch`, `xsstopw`, y reintento/recrawl. Compatibilidad total con Violentmonkey sandbox (`Reflect.apply` en `history`, descargas con `GM_download`). Eliminados falsos positivos en parámetros sensibles.
 - `v1.7.1` Pide usuario y contraseña (necesarios para enviar la url a yacy) y las guarda localmente sin modificar el script. 
 Permite seleccionar un contenido y  guardarlo como html cuando el contenido es muy util pero la url se filtra o yacy no lo indexa bien por asuntos de agente o cualquier otra razón indicando la url de la que proviene, el html se descarga pero aún así ese html debe ser crawleado manualmente ya que como archivo local se bloquea su crawleo por seguridad. (TO-DO)
 (corregido) — arreglos críticos: reset de estado (`isProcessing`), timeout, backoff exponencial, detección de URLs codificadas, `LOCALHOST_REGEX` refinado, `IP_PRIVATE_REGEX` con rango Carrier-Grade NAT (`100.64.*`), `MUST_NOT_MATCH_PATTERNS` convertido a `Set` para mantenimiento.

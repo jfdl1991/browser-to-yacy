@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         browser a yacy (Auto + Manual + Snippets Canonical)
 // @namespace    jfdl19991
-// @version      1.7.2
+// @version      1.7.3
 // @description  Envía la página actual a un nodo YaCy local para indexar, protegiendo la privacidad. Indexador P2P, limpiador de trackers y extractor de snippets con vista previa y canonical.
 // @match        http://*/*
 // @match        https://*/*
@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_download
 // @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
@@ -28,7 +29,10 @@
     // ==========================================
     // 1. CONFIGURACIÓN
     // ==========================================
-    const YACY_HOST = GM_getValue('YACY_HOST', 'http://localhost:8090');
+    function getYacyHost() {
+        const raw = GM_getValue('YACY_HOST', 'http://localhost:8090');
+        return raw.trim().replace(/\/+$/, '');
+    }
     const DELAY_MS = 4000;
     let debounceTimer = null;
     let lastSentUrl = '';
@@ -60,8 +64,7 @@
         'id_token', 'refresh_token', 'password', 'pin', 'otp', 'mfa_code',
         'jwt', 'bearer'
     ]);
-    // Pre-compile sensitive param substring matching regex at module level to avoid allocations on every URL evaluation
-    const SENSITIVE_PARAMS_SUBSTRING_REGEX = new RegExp([...SENSITIVE_PARAMS].join('|'), 'i');
+    const SENSITIVE_PARAM_BOUNDARIES_REGEX = /(?:^|_)(token|auth|key|pwd|code|session|sig|signature|secret|csrf|state|jwt|bearer)(?:_|$)/i;
 
     const TRACKING_PARAMS_EXACT = new Set([
         'gclid', 'fbclid', 'msclkid', 'ref', 'source', 'mc_eid', 'si', 'igshid',
@@ -99,8 +102,7 @@
         if (SENSITIVE_KEYWORDS_REGEX.test(fullPath)) return true;
         for (const param of urlObj.searchParams.keys()) {
             const lowerParam = param.toLowerCase();
-            // Fast Set lookup first; pre-compiled regex for substring checks eliminates array spreading allocations
-            if (SENSITIVE_PARAMS.has(lowerParam) || SENSITIVE_PARAMS_SUBSTRING_REGEX.test(lowerParam)) return true;
+            if (SENSITIVE_PARAMS.has(lowerParam) || SENSITIVE_PARAM_BOUNDARIES_REGEX.test(lowerParam)) return true;
         }
         return false;
     }
@@ -188,6 +190,19 @@
         return true;
     }
 
+    function configureHost() {
+        const currentHost = GM_getValue('YACY_HOST', 'http://localhost:8090');
+        const newHost = prompt("Configuración de YaCy: Introduce la URL de tu nodo YaCy:", currentHost);
+        if (newHost === null) return;
+        const trimmed = newHost.trim().replace(/\/+$/, '');
+        if (!trimmed) {
+            showToast("❌ URL de host inválida.", true);
+            return;
+        }
+        GM_setValue('YACY_HOST', trimmed);
+        showToast("🌐 Host de YaCy guardado: " + trimmed);
+    }
+
     function sendToYaCy(targetUrl, isManual = false) {
         // 1. Intentar obtener el usuario y contraseña guardados localmente
         let usuario = GM_getValue('yacy_user');
@@ -209,17 +224,19 @@
             }
         }
 
-        const ipMustnotmatch = "(127\\.0\\.0\\.1|localhost|192\\.168\\..*|10\\..*|172\\.(1[6-9]|2[0-9]|3[0-1])\\..*|169\\.254\\..*|100\\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\\..*|::1|fe80:|fc00:|fd00:)";
-        const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
+        const ipMustnotmatch = "^(127\\.|0\\.|192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.|169\\.254\\.|100\\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\\.|::1|fe80:|fc00:|fd00:)";
+        const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|[?&](token|auth|key|pwd|code|session|sig|signature|password|secret|csrf|state|jwt|bearer)=).*";
 
         const apiParams = new URLSearchParams({
-            'crawlingstart': '1',
+            'crawlingstart': 'on',
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
             'crawlingIfFileExists': 'override',
             'crawlingPost': 'on',
-            'crawlingFilter': '.*',
+            'mustmatch': '.*',
+            'mustnotmatch': mustnotmatch,
+            'ipMustnotmatch': ipMustnotmatch,
             'crawlingDomFilterDepth': '0',
             'crawlingDomMaxPages': '10000',
             'indexText': 'on',
@@ -227,12 +244,14 @@
             'storeHTCache': 'off',
             'crawlingQ': 'on',
             'recrawl': 'reload',
+            'reloadIfOlderNumber': '1',
+            'reloadIfOlderUnit': 'day',
+            'crawlingIfOlderCheck': 'on',
             'cachePolicy': 'no cache',
             'crawlOrder': 'off',
-            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
-            'crawlingAgentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
-            'ipMustnotmatch': ipMustnotmatch,
-            'mustnotmatch': mustnotmatch
+            'xsstopw': 'on',
+            'agentName': 'Custom Agent',
+            'crawlingAgentName': 'Custom Agent'
         });
 
         // Crear el token de autenticación con los datos recuperados o guardados (compatible con UTF-8)
@@ -248,7 +267,7 @@
 
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
+            url: `${getYacyHost()}/Crawler_p.html?${apiParams.toString()}`,
             headers: {
                 "Authorization": tokenAutenticacion
             },
@@ -331,14 +350,26 @@
         };
     }
 
+    function fallbackDownload(content, fileName) {
+        const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     function saveHtmlFile(htmlContent, sourceUrl, pageTitle, date) {
         const finalHtml = `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <title>${escapeHtml(pageTitle)}</title>
-    <link rel="canonical" href="${sourceUrl}">
-    <base href="${sourceUrl}">
+    <link rel="canonical" href="${escapeHtml(sourceUrl)}">
+    <base href="${escapeHtml(sourceUrl)}">
     <style>
         body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #222; }
         .metadata { background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.9em; border-left: 4px solid #2ecc71; }
@@ -348,8 +379,8 @@
 <body>
     <div class="metadata">
         <h2>${escapeHtml(pageTitle)}</h2>
-        <p><strong>Fuente Original:</strong> <a href="${sourceUrl}">${sourceUrl}</a></p>
-        <p><strong>Capturado el:</strong> ${date}</p>
+        <p><strong>Fuente Original:</strong> <a href="${escapeHtml(sourceUrl)}">${escapeHtml(sourceUrl)}</a></p>
+        <p><strong>Capturado el:</strong> ${escapeHtml(date)}</p>
     </div>
     <div class="content">
         ${htmlContent}
@@ -357,15 +388,23 @@
 </body>
 </html>`;
 
-        const blob = new Blob([finalHtml], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `YaCy_Snippet_${new Date().getTime()}.html`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const fileName = `YaCy_Snippet_${new Date().getTime()}.html`;
+
+        if (typeof GM_download === 'function') {
+            const blob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
+            const blobUrl = URL.createObjectURL(blob);
+            GM_download({
+                url: blobUrl,
+                name: fileName,
+                onload: () => URL.revokeObjectURL(blobUrl),
+                onerror: () => {
+                    URL.revokeObjectURL(blobUrl);
+                    fallbackDownload(finalHtml, fileName);
+                }
+            });
+        } else {
+            fallbackDownload(finalHtml, fileName);
+        }
 
         showToast("✅ Fragmento guardado con etiquetas Canonical y Base.");
     }
@@ -421,6 +460,7 @@
 
         GM_registerMenuCommand("🕷️ Enviar URL a YaCy (Manual)", triggerManualIndex);
         GM_registerMenuCommand("✂️ Capturar Selección (Oro Puro)", captureSelection);
+        GM_registerMenuCommand("🌐 Configurar Host de YaCy", configureHost);
         GM_registerMenuCommand("🔑 Configurar Credenciales de YaCy", configureCredentials);
         GM_registerMenuCommand("🔄 Resetear Credenciales de YaCy", function() {
             GM_setValue('yacy_user', '');
@@ -438,7 +478,7 @@
                 const originalPushState = targetHistory.pushState;
                 if (typeof originalPushState === 'function') {
                     targetHistory.pushState = function (...args) {
-                        const res = originalPushState.apply(this, args);
+                        const res = Reflect.apply(originalPushState, targetHistory, args);
                         triggerAutoEvaluation();
                         return res;
                     };
@@ -451,7 +491,7 @@
                 const originalReplaceState = targetHistory.replaceState;
                 if (typeof originalReplaceState === 'function') {
                     targetHistory.replaceState = function (...args) {
-                        const res = originalReplaceState.apply(this, args);
+                        const res = Reflect.apply(originalReplaceState, targetHistory, args);
                         triggerAutoEvaluation();
                         return res;
                     };
@@ -461,8 +501,12 @@
             }
         }
 
-        window.addEventListener('popstate', triggerAutoEvaluation);
-        window.addEventListener('hashchange', triggerAutoEvaluation);
+        win.addEventListener('popstate', triggerAutoEvaluation);
+        win.addEventListener('hashchange', triggerAutoEvaluation);
+        if (win !== window) {
+            window.addEventListener('popstate', triggerAutoEvaluation);
+            window.addEventListener('hashchange', triggerAutoEvaluation);
+        }
     }
 
     init();
