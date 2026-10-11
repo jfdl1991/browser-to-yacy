@@ -1,0 +1,4 @@
+## 2025-05-24 - Bracketed IPv6 Hostname Bypass in IP Regex Filtering
+**Vulnerability:** Standard WHATWG `URL` parser returns IPv6 addresses enclosed in square brackets (e.g. `[::1]`, `[fe80::1]`, `[fc00::1]`). Regexes matching private/loopback IPv6 prefixes anchored at start with `^::1` or `^fe80:` fail to match `urlObj.hostname`, allowing private IPv6 URLs to bypass zero-leak security filters.
+**Learning:** `new URL(url).hostname` formats IPv6 hostnames with enclosing brackets `[...]`. Regular expression patterns for IP address filtering must account for optional or mandatory brackets when operating on parsed hostnames.
+**Prevention:** Always include `\[?` prefix matching in regular expressions designed to inspect `url.hostname` for IPv6 address patterns, or strip brackets prior to evaluation.
