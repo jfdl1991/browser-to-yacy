@@ -60,8 +60,8 @@
         'id_token', 'refresh_token', 'password', 'pin', 'otp', 'mfa_code',
         'jwt', 'bearer'
     ]);
-    // Pre-compile sensitive param substring matching regex at module level to avoid allocations on every URL evaluation
-    const SENSITIVE_PARAMS_SUBSTRING_REGEX = new RegExp([...SENSITIVE_PARAMS].join('|'), 'i');
+    // Pre-compile sensitive param bounded regex (matching whole token or delimiting with underscores)
+    const SENSITIVE_PARAMS_BOUNDED_REGEX = new RegExp('(?:^|_)(?:' + [...SENSITIVE_PARAMS].join('|') + ')(?:_|$)', 'i');
 
     const TRACKING_PARAMS_EXACT = new Set([
         'gclid', 'fbclid', 'msclkid', 'ref', 'source', 'mc_eid', 'si', 'igshid',
@@ -99,14 +99,14 @@
         if (SENSITIVE_KEYWORDS_REGEX.test(fullPath)) return true;
         for (const param of urlObj.searchParams.keys()) {
             const lowerParam = param.toLowerCase();
-            // Fast Set lookup first; pre-compiled regex for substring checks eliminates array spreading allocations
-            if (SENSITIVE_PARAMS.has(lowerParam) || SENSITIVE_PARAMS_SUBSTRING_REGEX.test(lowerParam)) return true;
+            if (SENSITIVE_PARAMS.has(lowerParam) || SENSITIVE_PARAMS_BOUNDED_REGEX.test(lowerParam)) return true;
         }
         return false;
     }
 
     function isIpPrivate(hostname) {
-        return IP_PRIVATE_REGEX.test(hostname) || LOCALHOST_REGEX.test(hostname);
+        const cleanHost = hostname.replace(/^\[|\]$/g, '');
+        return IP_PRIVATE_REGEX.test(cleanHost) || LOCALHOST_REGEX.test(cleanHost);
     }
 
     function isDomainBlacklisted(hostname) {
@@ -213,13 +213,13 @@
         const mustnotmatch = ".*(file:|chrome:|about:|ftp:|javascript:|token=|auth=|key=|pwd=|code=|session=|signature=|password=|secret=|csrf=|state=|jwt=|bearer=).*";
 
         const apiParams = new URLSearchParams({
-            'crawlingstart': '1',
+            'crawlingstart': 'on',
             'crawlingMode': 'url',
             'crawlingURL': targetUrl,
             'crawlingDepth': '0',
             'crawlingIfFileExists': 'override',
             'crawlingPost': 'on',
-            'crawlingFilter': '.*',
+            'mustmatch': '.*',
             'crawlingDomFilterDepth': '0',
             'crawlingDomMaxPages': '10000',
             'indexText': 'on',
@@ -227,9 +227,11 @@
             'storeHTCache': 'off',
             'crawlingQ': 'on',
             'recrawl': 'reload',
+            'reloadIfOlderNumber': '1',
+            'reloadIfOlderUnit': 'day',
             'cachePolicy': 'no cache',
             'crawlOrder': 'off',
-            'agentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
+            'agentName': 'Custom Agent',
             'crawlingAgentName': 'Mozilla/5.0 (compatible; YaCy-AutoIndexer)',
             'ipMustnotmatch': ipMustnotmatch,
             'mustnotmatch': mustnotmatch
@@ -243,21 +245,24 @@
         }
         const tokenAutenticacion = "Basic " + utf8ToBase64(usuario + ":" + contrasena);
 
+        // Prevent duplicate requests during flight
+        lastSentUrl = targetUrl;
+
         // Registro en la consola de la URL que se va a enviar
         console.log("[YaCy Script] Enviando URL a rastrear:", targetUrl);
 
         GM_xmlhttpRequest({
             method: "GET",
-            url: `${YACY_HOST}/CrawlStart_p.html?${apiParams.toString()}`,
+            url: `${YACY_HOST}/Crawler_p.html?${apiParams.toString()}`,
             headers: {
                 "Authorization": tokenAutenticacion
             },
             timeout: 10000,
             onload: function (response) {
                 if (response.status === 200) {
-                    lastSentUrl = targetUrl;
                     if (isManual) showToast("✅ URL enviada a YaCy");
                 } else {
+                    lastSentUrl = ''; // Reset on failure so retry is possible
                     if (isManual) showToast("❌ Error YaCy: " + response.status, true);
                     // Si el error es 401 (No autorizado), borramos los datos para que vuelva a preguntar la próxima vez
                     if (response.status === 401) {
@@ -268,7 +273,12 @@
                 }
             },
             onerror: function(err) {
+                lastSentUrl = ''; // Reset on connection error
                 if (isManual) showToast("❌ Error de conexión con YaCy", true);
+            },
+            ontimeout: function() {
+                lastSentUrl = ''; // Reset on timeout
+                if (isManual) showToast("❌ Tiempo de espera agotado con YaCy", true);
             }
         });
 }
@@ -410,9 +420,13 @@
     function triggerManualIndex() {
         try {
             const currentUrlObj = new URL(window.location.href);
+            if (!['http:', 'https:'].includes(currentUrlObj.protocol)) return alert("❌ Seguridad: Solo se pueden indexar páginas HTTP/HTTPS.");
             if (isIpPrivate(currentUrlObj.hostname)) return alert("❌ Seguridad: No puedes indexar IPs locales.");
+            if (isDomainBlacklisted(currentUrlObj.hostname.toLowerCase())) return alert("❌ Seguridad: Este dominio está en la lista negra.");
             if (hasSensitiveData(currentUrlObj) && !confirm("⚠ ADVERTENCIA: Esta URL contiene palabras sensibles. ¿Enviar de todos modos?")) return;
-            sendToYaCy(sanitizeUrl(currentUrlObj).toString(), true);
+            const cleanUrlObj = sanitizeUrl(currentUrlObj);
+            if (!cleanUrlObj) return alert("❌ Error sanitizando la URL.");
+            sendToYaCy(cleanUrlObj.toString(), true);
         } catch (e) { alert("❌ Error procesando la URL."); }
     }
 
@@ -434,31 +448,20 @@
         const targetHistory = win.history || history;
 
         if (targetHistory) {
-            try {
-                const originalPushState = targetHistory.pushState;
-                if (typeof originalPushState === 'function') {
-                    targetHistory.pushState = function (...args) {
-                        const res = originalPushState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
+            ['pushState', 'replaceState'].forEach(method => {
+                try {
+                    const original = targetHistory[method];
+                    if (typeof original === 'function') {
+                        targetHistory[method] = function (...args) {
+                            const res = original.apply(targetHistory, args);
+                            triggerAutoEvaluation();
+                            return res;
+                        };
+                    }
+                } catch (e) {
+                    console.warn(`[YaCy Script] No se pudo envolver ${method}:`, e);
                 }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver pushState:", e);
-            }
-
-            try {
-                const originalReplaceState = targetHistory.replaceState;
-                if (typeof originalReplaceState === 'function') {
-                    targetHistory.replaceState = function (...args) {
-                        const res = originalReplaceState.apply(this, args);
-                        triggerAutoEvaluation();
-                        return res;
-                    };
-                }
-            } catch (e) {
-                console.warn("[YaCy Script] No se pudo envolver replaceState:", e);
-            }
+            });
         }
 
         window.addEventListener('popstate', triggerAutoEvaluation);
