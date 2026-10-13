@@ -71,7 +71,8 @@
         'cx', 'ie', 'share_id', 'camp'
     ]);
 
-    const IP_PRIVATE_REGEX = /^(127\.|0\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|::1|fe80:|fc00:|fd00:)/i;
+    // Optional leading bracket accounts for WHATWG URL parser formatting of IPv6 hostnames (e.g. [::1])
+    const IP_PRIVATE_REGEX = /^\[?(127\.|0\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|::1|fe80:|fc00:|fd00:)/i;
     const LOCALHOST_REGEX = /^(localhost|[0-9]{1,3}\.local$|\.local$|intranet|internal|network)$/i;
 
     // ==========================================
